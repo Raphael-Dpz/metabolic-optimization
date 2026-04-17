@@ -4,6 +4,10 @@ import numpy as np
 from torch.utils.data import TensorDataset, DataLoader, random_split
 
 class DataModule:
+    """
+    Generates Problems with parameters feature-dependant or not. 
+    x* solution is generated using CLARABEL, the most precise of the available solvers
+    """
     def __init__(self, config):
         self.num_samples = config.get("num_samples", 1000)
         self.num_fluxes = config.get("num_fluxes", 20)          
@@ -14,10 +18,16 @@ class DataModule:
         
         # A tuple of strings dictating which parameters depend on the features/data
         self.feature_dependent = config.get("feature_dependent", ("lb", "ub",)) 
+        
+        # Define the Oracle differentiable solver method. Must be a cp method
+        self.oracle_solver_name = config.get("oracle_solver", "CLARABEL")
+        self.oracle_backend = getattr(cp, self.oracle_solver_name.upper())
 
     def _generate_static_bases(self):
-        """Generates the base random values for all parameters. If a parameter is NOT 
-        feature-dependent, it will stay at this exact value for every sample."""
+        """
+        Generates the base random values for all parameters. 
+        If a parameter is NOT feature-dependent, it will stay at this exact value for every sample.
+        """
         bases = {
             "A": np.random.randn(self.num_metabolites, self.num_fluxes),
             "b": np.random.randn(self.num_metabolites),
@@ -47,7 +57,8 @@ class DataModule:
         bases, projectors = self._generate_static_bases()
         
         # Storage for our valid, solvable dataset
-        data_store = {"feat": [], "A": [], "b": [], "c": [], "lb": [], "ub": [], "x": []}
+        data_store = {"feat": [], "A": [], "b": [], "c": [], "lb": [], "ub": [], "x": [],
+                      "oracle_time": [], "oracle_iters": []}
         
         print(f"Generating data. Feature-dependent parameters: {self.feature_dependent}")
         
@@ -92,14 +103,14 @@ class DataModule:
             prob = cp.Problem(objective, constraints)
             
             try:
-                prob.solve(solver=cp.SCS, warm_start=False)
+                prob.solve(solver=self.oracle_backend, warm_start=False)
             except cp.SolverError:
                 skipped_count += 1
                 continue 
 
             # --- 3. Filter valid solutions ---
             if prob.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE] and x.value is not None:
-                if np.mean(np.abs(x.value)) > 0.1:  # Non-triviality check -> maybe to change
+                if np.mean(np.abs(x.value)) > 0.1:  # Non-triviality check -> maybe to change                    
                     data_store["feat"].append(feat)
                     data_store["A"].append(A_curr)
                     data_store["b"].append(b_curr)
@@ -107,6 +118,8 @@ class DataModule:
                     data_store["lb"].append(lb_curr)
                     data_store["ub"].append(ub_curr)
                     data_store["x"].append(x.value)
+                    data_store["oracle_time"].append(prob.solver_stats.solve_time)
+                    data_store["oracle_iters"].append(prob.solver_stats.num_iters)
                     
                     # Check if we hit a 10% milestone
                     current_n = len(data_store["feat"])
@@ -128,10 +141,17 @@ class DataModule:
         
         train_size = int(0.8 * self.num_samples)
         test_size = self.num_samples - train_size
-        return random_split(dataset, [train_size, test_size])
+        train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+        metadata = {
+            "oracle_solver": self.oracle_solver_name,
+            "feature_dependent_params": self.feature_dependent,
+            "num_samples": self.num_samples,
+            "l2_reg_applied": self.l2_reg
+        }
+        return train_dataset, test_dataset, metadata
 
     def get_dataloaders(self):
-        train_dataset, test_dataset = self.generate_datasets()
+        train_dataset, test_dataset, metadata = self.generate_datasets()
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False)
-        return train_loader, test_loader
+        return train_loader, test_loader, metadata
