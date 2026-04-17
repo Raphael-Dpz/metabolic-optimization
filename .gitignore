@@ -1,0 +1,10 @@
+# Ignore Python virtual environments and caches
+__pycache__/
+.venv/
+
+# Ignore model weights and data files
+models/
+results/
+data/
+*.pth
+*.keras
