@@ -1,6 +1,7 @@
 import os
 import json
 import time
+from datetime import datetime
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,20 +15,30 @@ class Pipeline:
     def __init__(self, config):
         self.config = config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.results_dir = config.get("results_dir", "results/")
-        os.makedirs(self.results_dir, exist_ok=True)
         
-        # 1. Initialize Data and Solver
-        print("Initializing DataModule...")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        exp_name = f"run_{config.get('task')}_{timestamp}"
+        self.exp_dir = os.path.join(config.get("results_dir", "results/"), exp_name)
+        self.weights_dir = os.path.join(self.exp_dir, "weights")
+        
+        os.makedirs(self.exp_dir, exist_ok=True)
+        os.makedirs(self.weights_dir, exist_ok=True)
+
+        # 1. Save the exact configuration used for this run
+        with open(os.path.join(self.exp_dir, "config_used.json"), 'w') as f:
+            json.dump(self.config, f, indent=4)
+        
+        # 2. Initialize Data
+        print(f"Initializing Experiment in: {self.exp_dir}")
         self.data_module = DataModule(config)
         self.train_loader, self.test_loader, self.metadata = self.data_module.get_dataloaders()
         
-        # Save metadata for reproducibility
-        with open(os.path.join(self.results_dir, "dataset_metadata.json"), 'w') as f:
+        # 3. Save dataset metadata strictly linked to this run
+        with open(os.path.join(self.exp_dir, "dataset_metadata.json"), 'w') as f:
             json.dump(self.metadata, f, indent=4)
             
         self.benchmark_solver = BenchmarkSolver(config)
-        self.target_solver = config.get("benchmark_solver", "OSQP") # e.g., OSQP or SCS
+        self.target_solver = config.get("benchmark_solver", "OSQP")
 
     # ==========================================
     # TRAINING LOOPS
@@ -56,6 +67,12 @@ class Pipeline:
                 
             if (epoch + 1) % 10 == 0:
                 print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss/len(self.train_loader):.6f}")
+                checkpoint_path = os.path.join(self.weights_dir, f"semi_amortized_epoch_{epoch+1}.pth")
+                torch.save(model.state_dict(), checkpoint_path)
+                
+        final_path = os.path.join(self.weights_dir, "semi_amortized_final.pth")
+        torch.save(model.state_dict(), final_path)
+        print(f"Model saved to {self.weights_dir}")
                 
         return model
 
@@ -96,7 +113,16 @@ class Pipeline:
                 
             if (epoch + 1) % 10 == 0:
                 print(f"Epoch {epoch+1}/{epochs} | TS Loss (Params): {ts_loss_total/len(self.train_loader):.4f} | E2E Loss (Decisions): {e2e_loss_total/len(self.train_loader):.4f}")
+                ts_ckpt_path = os.path.join(self.weights_dir, f"two_stage_epoch_{epoch+1}.pth")
+                e2e_ckpt_path = os.path.join(self.weights_dir, f"end_to_end_epoch_{epoch+1}.pth")
+                
+                torch.save(two_stage_model.state_dict(), ts_ckpt_path)
+                torch.save(e2e_model.state_dict(), e2e_ckpt_path)
 
+        torch.save(two_stage_model.state_dict(), os.path.join(self.weights_dir, "two_stage_final.pth"))
+        torch.save(e2e_model.state_dict(), os.path.join(self.weights_dir, "end_to_end_final.pth"))
+        print(f"PTO Models saved to {self.weights_dir}")
+        
         return two_stage_model, e2e_model
 
     # ==========================================
@@ -147,7 +173,9 @@ class Pipeline:
         print(f"Avg Time Saved: {(np.mean(results['cold_time']) - np.mean(results['warm_time'])) * 1000:.2f} ms per solve")
         
         # Save to disk
-        np.save(os.path.join(self.results_dir, "semi_amortized_results.npy"), results)
+        results_path = os.path.join(self.exp_dir, "benchmark_metrics.npy")
+        np.save(results_path, results)
+        print(f"Benchmark metrics saved to {results_path}")
 
     def run_pto_benchmark(self, ts_model, e2e_model):
         """Track 2: Compares objective regret between Two-Stage and End-to-End."""
@@ -196,7 +224,9 @@ class Pipeline:
         print(f"Avg Two-Stage Regret: {np.mean(results['ts_regret']):.4f}")
         print(f"Avg End-to-End Regret: {np.mean(results['e2e_regret']):.4f}")
         
-        np.save(os.path.join(self.results_dir, "pto_results.npy"), results)
+        results_path = os.path.join(self.exp_dir, "pto_benchmark_metrics.npy")
+        np.save(results_path, results)
+        print(f"Benchmark metrics saved to {results_path}")
 
     def run(self):
         """Main execution flow based on config settings."""

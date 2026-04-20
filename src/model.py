@@ -106,6 +106,7 @@ class DifferentiableSolver(nn.Module):
 
     def forward(self, A, b, c, lb, ub):
         solver_args = {
+            "solve_method": self.config.get("diff_solver", "SCS"), # currently only CSC (or ECOS ?) are supported
             "max_iters": self.max_iters,
             "eps": self.eps,
             "verbose": self.verbose
