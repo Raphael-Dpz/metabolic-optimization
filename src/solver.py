@@ -24,7 +24,7 @@ class BenchmarkSolver:
         - If 'warm_start_x' is provided, it performs a Semi-Amortized Warm Start.
         - If 'warm_start_x' is None, it performs a Cold Start.
         - For Predict-Then-Optimize, you just pass the predicted parameters (like predicted_c)
-          instead of the true parameters and no warm_start_x
+          instead of the true parameters and no warm_start_x.
         """
         # 1. Convert everything to Numpy
         A_np = self._to_numpy(A)
