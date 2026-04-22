@@ -1,7 +1,6 @@
 from src.pipeline import Pipeline
 
 if __name__ == "__main__":
-    # The ultimate configuration dictionary
     config = {
         # General Data settings
         "num_samples": 500,
@@ -20,7 +19,7 @@ if __name__ == "__main__":
         # Experiment settings
         "task": "semi_amortized",       # Choose: "semi_amortized" or "predict_then_optimize"
         "feature_dependent": ("lb", "ub",),    # Parameters that depend on features
-        "epochs": 30,
+        "epochs": 50,
         "lr": 1e-3,
         "results_dir": "results/"
     }
